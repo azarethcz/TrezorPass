@@ -185,6 +185,123 @@ namespace Crypto {
 
         // Vytvoříme výstupní paket obsahující hlavičku Salt + zašifrovaná data
         std::vector<unsigned char> output;
-        output.insert(output.end(), "Salted__", "Salted__" + 8);
+        const char* magic = "Salted__";
+        output.insert(output.end(), magic, magic + 8);
         output.insert(output.end(), salt, salt + 8);
-        output.insert
+        output.insert(output.end(), cipherText.begin(), cipherText.end());
+        return output;
+    }
+
+    // AES-256 dešifrování dat ze souboru passwords.enc
+    std::string decryptData(const std::vector<unsigned char>& input, const std::string& password) {
+        if (input.size() < 16 || std::string(input.begin(), input.begin() + 8) != "Salted__") {
+            return ""; 
+        }
+
+        const unsigned char* salt = input.data() + 8;
+        const unsigned char* cipherText = input.data() + 16;
+        size_t cipherTextLen = input.size() - 16;
+
+        unsigned char key[32], iv[32];
+        EVP_BytesToKey(EVP_aes_256_cbc(), EVP_sha256(), salt, 
+                       reinterpret_cast<const unsigned char*>(password.c_str()), 
+                       password.size(), 1, key, iv);
+
+        EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+        std::vector<std::string::value_type> plainText(cipherTextLen + EVP_MAX_BLOCK_LENGTH);
+        int len = 0, decryptedLen = 0;
+
+        EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key, iv);
+        EVP_DecryptUpdate(ctx, reinterpret_cast<unsigned char*>(plainText.data()), &len, cipherText, cipherTextLen);
+        decryptedLen = len;
+        
+        if (EVP_DecryptFinal_ex(ctx, reinterpret_cast<unsigned char*>(plainText.data()) + len, &len) != 1) {
+            EVP_CIPHER_CTX_free(ctx);
+            return ""; 
+        }
+        decryptedLen += len;
+        EVP_CIPHER_CTX_free(ctx);
+
+        return std::string(plainText.data(), decryptedLen);
+    }
+}
+
+// ============================================================================
+// 3. SPRÁVA A ŠIFROVANÉ UKLÁDÁNÍ TREZORU
+// ============================================================================
+const std::string SOUBOR_TREZORU = "passwords.enc";
+std::string hlavniHesloUloziste = "mojeHlavniHeslo123";
+
+std::vector<PolozkaHesla> nactiTrezor() {
+    std::ifstream soubor(SOUBOR_TREZORU, std::ios::binary);
+    if (!soubor.is_open()) {
+        return {
+            {1, "Gmail", "martin.strnad@gmail.com", "mojeTajneHeslo123!"},
+            {2, "GitHub", "mstrnad", "GitSecureP@ss2026"},
+            {3, "Facebook", "martin.strnad", "123456"}
+        };
+    }
+
+    std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(soubor)), std::istreambuf_iterator<char>());
+    soubor.close();
+
+    std::string dešifrovano = Crypto::decryptData(bytes, hlavniHesloUloziste);
+    if (dešifrovano.empty()) {
+        return {};
+    }
+
+    std::vector<PolozkaHesla> trezor;
+    std::stringstream ss(dešifrovano);
+    PolozkaHesla p;
+    while (ss >> p.id >> p.sluzba >> p.uzivatel >> p.heslo) {
+        trezor.push_back(p);
+    }
+    return trezor;
+}
+
+void ulozTrezor(const std::vector<PolozkaHesla>& trezor) {
+    std::stringstream ss;
+    for (const auto& p : trezor) {
+        ss << p.id << " " << p.sluzba << " " << p.uzivatel << " " << p.heslo << "\n";
+    }
+
+    std::vector<unsigned char> zašifrovano = Crypto::encryptData(ss.str(), hlavniHesloUloziste);
+    std::ofstream soubor(SOUBOR_TREZORU, std::ios::binary);
+    if (soubor.is_open()) {
+        soubor.write(reinterpret_cast<const char*>(zašifrovano.data()), zašifrovano.size());
+        soubor.close();
+    }
+}
+
+// ============================================================================
+// 4. HLAVNÍ LOGIKA
+// ============================================================================
+void zobrazMenu() {
+    TerminalUI::nakresliHorniRamecek("HLAVNÍ MENU");
+    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[1] " + TerminalUI::WHITE + "Zobrazit přehled služeb " + TerminalUI::GRAY + "(bez zobrazení hesel)");
+    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[2] " + TerminalUI::WHITE + "Odtajnit konkrétní heslo " + TerminalUI::GRAY + "(podle ID)");
+    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[3] " + TerminalUI::WHITE + "Přidat nové heslo");
+    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[4] " + TerminalUI::RED   + "Odstranit heslo z trezoru " + TerminalUI::GRAY + "(podle ID)");
+    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[5] " + TerminalUI::WHITE + "Vygenerovat silné heslo");
+    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[6] " + TerminalUI::WHITE + "Spustit Bezpečnostní Audit " + TerminalUI::YELLOW + "(Chytrá analýza)");
+    TerminalUI::vytiskniRadekRamecku(TerminalUI::RED         + "[7] " + TerminalUI::WHITE + "Zamknout trezor a ukončit");
+    TerminalUI::nakresliPatuRamecku();
+}
+
+int main() {
+    TerminalUI::smažVse();
+
+    std::vector<PolozkaHesla> trezor = nactiTrezor();
+    ulozTrezor(trezor);
+
+    bool bezi = true;
+
+    while (bezi) {
+        TerminalUI::nakresliHlavicku();
+        zobrazMenu();
+
+        std::cout << "\n" << TerminalUI::BRIGHT_GREEN << "Volba ❯ " << TerminalUI::WHITE;
+        int volba = 0;
+        if (!(std::cin >> volba)) {
+            std::cin.clear();
+            std::
