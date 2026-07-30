@@ -17,7 +17,7 @@
 #endif
 
 // ============================================================================
-// 1. TERMINÁLOVÉ ROZHRANÍ (UI) - Hladké vykreslování bez problikávání
+// 1. TERMINÁLOVÉ ROZHRANÍ (UI)
 // ============================================================================
 namespace TerminalUI {
     const std::string RESET        = "\033[0m";
@@ -159,198 +159,32 @@ namespace Crypto {
         }
         return ss.str();
     }
-}
 
-// ============================================================================
-// 3. SOUBOROVÉ OPERACE PRO UKLÁDÁNÍ
-// ============================================================================
-std::vector<PolozkaHesla> nactiTrezor(const std::string& nazevSouboru) {
-    std::vector<PolozkaHesla> trezor;
-    std::ifstream soubor(nazevSouboru);
-    
-    if (!soubor.is_open()) {
-        // Výchozí hodnoty při prvním spuštění
-        return {
-            {1, "Gmail", "martin.strnad@gmail.com", "mojeTajneHeslo123!"},
-            {2, "GitHub", "mstrnad", "GitSecureP@ss2026"},
-            {3, "Facebook", "martin.strnad", "123456"}
-        };
-    }
+    // AES-256 šifrování dat pro uložení do passwords.enc
+    std::vector<unsigned char> encryptData(const std::string& plainText, const std::string& password) {
+        unsigned char salt[8];
+        RAND_bytes(salt, sizeof(salt));
 
-    PolozkaHesla p;
-    while (soubor >> p.id >> p.sluzba >> p.uzivatel >> p.heslo) {
-        trezor.push_back(p);
-    }
-    
-    soubor.close();
-    return trezor;
-}
+        unsigned char key[32], iv[32];
+        EVP_BytesToKey(EVP_aes_256_cbc(), EVP_sha256(), salt, 
+                       reinterpret_cast<const unsigned char*>(password.c_str()), 
+                       password.size(), 1, key, iv);
 
-void ulozTrezor(const std::string& nazevSouboru, const std::vector<PolozkaHesla>& trezor) {
-    std::ofstream soubor(nazevSouboru);
-    if (soubor.is_open()) {
-        for (const auto& p : trezor) {
-            soubor << p.id << " " << p.sluzba << " " << p.uzivatel << " " << p.heslo << "\n";
-        }
-        soubor.close();
-    }
-}
+        EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+        std::vector<unsigned char> cipherText(plainText.size() + EVP_MAX_BLOCK_LENGTH);
+        int len = 0, encryptedLen = 0;
 
-// ============================================================================
-// 4. HLAVNÍ LOGIKA
-// ============================================================================
-void zobrazMenu() {
-    TerminalUI::nakresliHorniRamecek("HLAVNÍ MENU");
-    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[1] " + TerminalUI::WHITE + "Zobrazit přehled služeb " + TerminalUI::GRAY + "(bez zobrazení hesel)");
-    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[2] " + TerminalUI::WHITE + "Odtajnit konkrétní heslo " + TerminalUI::GRAY + "(podle ID)");
-    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[3] " + TerminalUI::WHITE + "Přidat nové heslo");
-    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[4] " + TerminalUI::RED   + "Odstranit heslo z trezoru " + TerminalUI::GRAY + "(podle ID)");
-    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[5] " + TerminalUI::WHITE + "Vygenerovat silné heslo");
-    TerminalUI::vytiskniRadekRamecku(TerminalUI::BRIGHT_CYAN + "[6] " + TerminalUI::WHITE + "Spustit Bezpečnostní Audit " + TerminalUI::YELLOW + "(Chytrá analýza)");
-    TerminalUI::vytiskniRadekRamecku(TerminalUI::RED         + "[7] " + TerminalUI::WHITE + "Zamknout trezor a ukončit");
-    TerminalUI::nakresliPatuRamecku();
-}
+        EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), nullptr, key, iv);
+        EVP_EncryptUpdate(ctx, cipherText.data(), &len, 
+                          reinterpret_cast<const unsigned char*>(plainText.c_str()), plainText.size());
+        encryptedLen = len;
+        EVP_EncryptFinal_ex(ctx, cipherText.data() + len, &len);
+        encryptedLen += len;
+        cipherText.resize(encryptedLen);
+        EVP_CIPHER_CTX_free(ctx);
 
-int main() {
-    TerminalUI::smažVse();
-
-    const std::string jmenoSouboru = "trezor_data.txt";
-    std::vector<PolozkaHesla> trezor = nactiTrezor(jmenoSouboru);
-
-    bool bezi = true;
-
-    while (bezi) {
-        TerminalUI::nakresliHlavicku();
-        zobrazMenu();
-
-        std::cout << "\n" << TerminalUI::BRIGHT_GREEN << "Volba ❯ " << TerminalUI::WHITE;
-        int volba = 0;
-        if (!(std::cin >> volba)) {
-            std::cin.clear();
-            std::cin.ignore(10000, '\n');
-            TerminalUI::smažVse();
-            continue;
-        }
-
-        std::cin.ignore(10000, '\n'); 
-
-        switch (volba) {
-            case 1: {
-                TerminalUI::smažVse();
-                TerminalUI::nakresliHorniRamecek("PŘEHLED ULOŽENÝCH SLUŽEB");
-                if (trezor.empty()) {
-                    TerminalUI::vytiskniRadekRamecku(TerminalUI::YELLOW + "Trezor je aktuálně prázdný." + TerminalUI::RESET);
-                } else {
-                    for (const auto& p : trezor) {
-                        std::string radek = TerminalUI::BRIGHT_CYAN + "ID " + std::to_string(p.id) + ": " 
-                                          + TerminalUI::WHITE + p.sluzba 
-                                          + TerminalUI::GRAY + " (" + p.uzivatel + ")";
-                        TerminalUI::vytiskniRadekRamecku(radek);
-                    }
-                }
-                TerminalUI::nakresliPatuRamecku();
-                break;
-            }
-            case 2: {
-                TerminalUI::smažVse();
-                std::cout << "Zadejte ID položky: ";
-                int id;
-                std::cin >> id;
-                std::cin.ignore(10000, '\n');
-
-                bool nalezeno = false;
-                for (const auto& p : trezor) {
-                    if (p.id == id) {
-                        TerminalUI::nakresliHorniRamecek("DETAILY HESLA");
-                        TerminalUI::vytiskniRadekRamecku("Služba:   " + TerminalUI::WHITE + p.sluzba);
-                        TerminalUI::vytiskniRadekRamecku("Uživatel: " + TerminalUI::GRAY + p.uzivatel);
-                        TerminalUI::vytiskniRadekRamecku("Heslo:    " + TerminalUI::BOLD + TerminalUI::YELLOW + p.heslo);
-                        TerminalUI::nakresliPatuRamecku();
-                        nalezeno = true;
-                        break;
-                    }
-                }
-                if (!nalezeno) {
-                    std::cout << TerminalUI::RED << "Položka s tímto ID neexistuje!\n" << TerminalUI::RESET;
-                }
-                break;
-            }
-            case 3: {
-                TerminalUI::smažVse();
-                PolozkaHesla nova;
-                nova.id = trezor.empty() ? 1 : trezor.back().id + 1;
-                std::cout << "Název služby (bez mezer): ";
-                std::cin >> nova.sluzba;
-                std::cout << "Uživatelské jméno / e-mail: ";
-                std::cin >> nova.uzivatel;
-                std::cout << "Heslo: ";
-                std::cin >> nova.heslo;
-                std::cin.ignore(10000, '\n');
-
-                trezor.push_back(nova);
-                ulozTrezor(jmenoSouboru, trezor); // Uložení změn na disk
-                std::cout << TerminalUI::BRIGHT_GREEN << "\n[✓] Položka byla úspěšně přidána a uložena!\n" << TerminalUI::RESET;
-                break;
-            }
-            case 4: {
-                TerminalUI::smažVse();
-                std::cout << "Zadejte ID k odstranění: ";
-                int id;
-                std::cin >> id;
-                std::cin.ignore(10000, '\n');
-
-                auto it = std::remove_if(trezor.begin(), trezor.end(), [id](const PolozkaHesla& p) {
-                    return p.id == id;
-                });
-
-                if (it != trezor.end()) {
-                    trezor.erase(it, trezor.end());
-                    ulozTrezor(jmenoSouboru, trezor); // Uložení změn na disk
-                    std::cout << TerminalUI::BRIGHT_GREEN << "\n[✓] Položka s ID " << id << " byla úspěšně odstraněna.\n" << TerminalUI::RESET;
-                } else {
-                    std::cout << TerminalUI::RED << "\n[×] Položka s ID " << id << " nebyla nalezena.\n" << TerminalUI::RESET;
-                }
-                break;
-            }
-            case 5: {
-                TerminalUI::smažVse();
-                std::string noveHeslo = Crypto::vygenerujHeslo(18);
-                TerminalUI::nakresliHorniRamecek("VYGENEROVANÉ SILNÉ HESLO");
-                TerminalUI::vytiskniRadekRamecku("Heslo: " + TerminalUI::BOLD + TerminalUI::BRIGHT_GREEN + noveHeslo);
-                TerminalUI::nakresliPatuRamecku();
-                break;
-            }
-            case 6: {
-                TerminalUI::smažVse();
-                TerminalUI::nakresliHorniRamecek("BEZPEČNOSTNÍ AUDIT");
-                if (trezor.empty()) {
-                    TerminalUI::vytiskniRadekRamecku(TerminalUI::YELLOW + "Trezor je prázdný, nebyly nalezeny žádné položky k auditu." + TerminalUI::RESET);
-                } else {
-                    for (const auto& p : trezor) {
-                        std::string stav = (p.heslo.length() < 8) 
-                            ? (TerminalUI::RED + "SLABÉ (krátké)" + TerminalUI::RESET) 
-                            : (TerminalUI::BRIGHT_GREEN + "BEZPEČNÉ" + TerminalUI::RESET);
-                        TerminalUI::vytiskniRadekRamecku(p.sluzba + " ❯ " + stav);
-                    }
-                }
-                TerminalUI::nakresliPatuRamecku();
-                break;
-            }
-            case 7:
-                bezi = false;
-                TerminalUI::smažVse();
-                std::cout << TerminalUI::CYAN << "\n[✓] Trezor byl bezpečně uzamčen. Na shledanou!\n\n" << TerminalUI::RESET;
-                continue;
-            default:
-                TerminalUI::smažVse();
-                std::cout << TerminalUI::RED << "Neplatná volba!\n" << TerminalUI::RESET;
-                break;
-        }
-
-        std::cout << TerminalUI::GRAY << "\nStiskněte Enter pro pokračování..." << TerminalUI::RESET;
-        std::cin.get();
-        TerminalUI::smažVse();
-    }
-
-    return 0;
-}
+        // Vytvoříme výstupní paket obsahující hlavičku Salt + zašifrovaná data
+        std::vector<unsigned char> output;
+        output.insert(output.end(), "Salted__", "Salted__" + 8);
+        output.insert(output.end(), salt, salt + 8);
+        output.insert
