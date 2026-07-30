@@ -35,7 +35,6 @@ namespace TerminalUI {
 
     const int SIRKA_OBSAHU = 68; 
 
-    // Místo smazání obrazovky (což způsobovalo blikání) pouze přesuneme kurzor na začátek
     void vycisti() {
 #ifdef _WIN32
         HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -44,11 +43,9 @@ namespace TerminalUI {
         dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
         SetConsoleMode(hOut, dwMode);
 #endif
-        // \033[H vrátí kurzor do levého horního rohu (0,0) bez blikání
         std::cout << "\033[H";
     }
 
-    // Úplné smazání obrazovky pro čisté ukončení programu
     void smažVse() {
         std::cout << "\033[2J\033[1;1H";
     }
@@ -88,7 +85,6 @@ namespace TerminalUI {
         int mezery = SIRKA_OBSAHU - static_cast<int>(visLen);
         if (mezery < 0) mezery = 0;
 
-        // \033[K vyčistí zbytek řádku doprava, aby nezůstaly zbytky starého textu
         std::cout << BRIGHT_CYAN << "│ " << RESET << obsah 
                   << opakujZnak(" ", mezery) << BRIGHT_CYAN << " │\033[K\n" << RESET;
     }
@@ -97,8 +93,8 @@ namespace TerminalUI {
         vycisti();
         std::cout << BRIGHT_CYAN << "┌" << opakujZnak("─", SIRKA_OBSAHU + 2) << "┐\033[K\n" << RESET;
         
-        std::string radek1 = BOLD + WHITE + "              BEZPEČNÝ SPRÁVCE HESEL (TREZOR v3.4)" + RESET;
-        std::string radek2 = GRAY + "                Autor aplikace: " + BRIGHT_GREEN + "Martin Strnad" + RESET;
+        std::string radek1 = BOLD + WHITE + "            BEZPEČNÝ SPRÁVCE HESEL (TREZOR v3.4)" + RESET;
+        std::string radek2 = GRAY + "               Autor aplikace: " + BRIGHT_GREEN + "Martin Strnad" + RESET;
 
         vytiskniRadekRamecku(radek1);
         vytiskniRadekRamecku(radek2);
@@ -166,7 +162,42 @@ namespace Crypto {
 }
 
 // ============================================================================
-// 3. HLAVNÍ LOGIKA
+// 3. SOUBOROVÉ OPERACE PRO UKLÁDÁNÍ
+// ============================================================================
+std::vector<PolozkaHesla> nactiTrezor(const std::string& nazevSouboru) {
+    std::vector<PolozkaHesla> trezor;
+    std::ifstream soubor(nazevSouboru);
+    
+    if (!soubor.is_open()) {
+        // Výchozí hodnoty při prvním spuštění
+        return {
+            {1, "Gmail", "martin.strnad@gmail.com", "mojeTajneHeslo123!"},
+            {2, "GitHub", "mstrnad", "GitSecureP@ss2026"},
+            {3, "Facebook", "martin.strnad", "123456"}
+        };
+    }
+
+    PolozkaHesla p;
+    while (soubor >> p.id >> p.sluzba >> p.uzivatel >> p.heslo) {
+        trezor.push_back(p);
+    }
+    
+    soubor.close();
+    return trezor;
+}
+
+void ulozTrezor(const std::string& nazevSouboru, const std::vector<PolozkaHesla>& trezor) {
+    std::ofstream soubor(nazevSouboru);
+    if (soubor.is_open()) {
+        for (const auto& p : trezor) {
+            soubor << p.id << " " << p.sluzba << " " << p.uzivatel << " " << p.heslo << "\n";
+        }
+        soubor.close();
+    }
+}
+
+// ============================================================================
+// 4. HLAVNÍ LOGIKA
 // ============================================================================
 void zobrazMenu() {
     TerminalUI::nakresliHorniRamecek("HLAVNÍ MENU");
@@ -181,14 +212,10 @@ void zobrazMenu() {
 }
 
 int main() {
-    // Při prvním spuštění smažeme obrazovku dočista
     TerminalUI::smažVse();
 
-    std::vector<PolozkaHesla> trezor = {
-        {1, "Gmail", "martin.strnad@gmail.com", "mojeTajneHeslo123!"},
-        {2, "GitHub", "mstrnad", "GitSecureP@ss2026"},
-        {3, "Facebook", "martin.strnad", "123456"}
-    };
+    const std::string jmenoSouboru = "trezor_data.txt";
+    std::vector<PolozkaHesla> trezor = nactiTrezor(jmenoSouboru);
 
     bool bezi = true;
 
@@ -252,7 +279,7 @@ int main() {
                 TerminalUI::smažVse();
                 PolozkaHesla nova;
                 nova.id = trezor.empty() ? 1 : trezor.back().id + 1;
-                std::cout << "Název služby: ";
+                std::cout << "Název služby (bez mezer): ";
                 std::cin >> nova.sluzba;
                 std::cout << "Uživatelské jméno / e-mail: ";
                 std::cin >> nova.uzivatel;
@@ -261,7 +288,8 @@ int main() {
                 std::cin.ignore(10000, '\n');
 
                 trezor.push_back(nova);
-                std::cout << TerminalUI::BRIGHT_GREEN << "\n[✓] Položka byla úspěšně přidána do trezoru!\n" << TerminalUI::RESET;
+                ulozTrezor(jmenoSouboru, trezor); // Uložení změn na disk
+                std::cout << TerminalUI::BRIGHT_GREEN << "\n[✓] Položka byla úspěšně přidána a uložena!\n" << TerminalUI::RESET;
                 break;
             }
             case 4: {
@@ -277,6 +305,7 @@ int main() {
 
                 if (it != trezor.end()) {
                     trezor.erase(it, trezor.end());
+                    ulozTrezor(jmenoSouboru, trezor); // Uložení změn na disk
                     std::cout << TerminalUI::BRIGHT_GREEN << "\n[✓] Položka s ID " << id << " byla úspěšně odstraněna.\n" << TerminalUI::RESET;
                 } else {
                     std::cout << TerminalUI::RED << "\n[×] Položka s ID " << id << " nebyla nalezena.\n" << TerminalUI::RESET;
@@ -320,7 +349,7 @@ int main() {
 
         std::cout << TerminalUI::GRAY << "\nStiskněte Enter pro pokračování..." << TerminalUI::RESET;
         std::cin.get();
-        TerminalUI::smažVse(); // Před návratem do hlavního menu čistě smaže předchozí akci
+        TerminalUI::smažVse();
     }
 
     return 0;
